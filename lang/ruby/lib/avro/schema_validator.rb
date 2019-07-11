@@ -67,6 +67,7 @@ module Avro
         options ||= {}
         options[:recursive] = true unless options.key?(:recursive)
         options[:use_original_impl] = true unless options.key?(:use_original_impl)
+        # options[:use_original_impl] = false
 
         result = Result.new
         if options[:recursive]
@@ -86,29 +87,69 @@ module Avro
         next_options = options.merge(encoded: true)
         validate_simple(expected_schema, datum, path, result, next_options)
 
-        case expected_schema.type_sym
-        when :array
-          validate_array(expected_schema, datum, path, result, options)
-        when :map
-          validate_map(expected_schema, datum, path, result, options)
-        when :union
-          validate_union(expected_schema, datum, path, result, options)
-        when :record, :error, :request
-          fail TypeMismatchError unless datum.is_a?(Hash)
-          expected_schema.fields.each do |field|
-            deeper_path = deeper_path_for_hash(field.name, path)
-            validate_recursive(field.type, datum[field.name], deeper_path, result, options)
+
+        if options[:use_original_impl]
+          begin
+            case expected_schema.type_sym
+            when :array
+              validate_array(expected_schema, datum, path, result, options)
+            when :map
+              validate_map(expected_schema, datum, path, result, options)
+            when :union
+              validate_union(expected_schema, datum, path, result, options)
+            when :record, :error, :request
+              fail TypeMismatchError unless datum.is_a?(Hash)
+              expected_schema.fields.each do |field|
+                deeper_path = deeper_path_for_hash(field.name, path)
+                validate_recursive(field.type, datum[field.name], deeper_path, result, options)
+              end
+              if options[:fail_on_extra_fields]
+                datum_fields = datum.keys.map(&:to_s)
+                schema_fields = expected_schema.fields.map(&:name)
+                (datum_fields - schema_fields).each do |extra_field|
+                  result.add_error(path, "extra field '#{extra_field}' - not in schema")
+                end
+              end
+            end
+          rescue TypeMismatchError
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
           end
-          if options[:fail_on_extra_fields]
-            datum_fields = datum.keys.map(&:to_s)
-            schema_fields = expected_schema.fields.map(&:name)
-            (datum_fields - schema_fields).each do |extra_field|
-              result.add_error(path, "extra field '#{extra_field}' - not in schema")
+        else
+
+          case expected_schema.type_sym
+          when :array
+            if datum.is_a?(Array)
+              validate_array(expected_schema, datum, path, result, options)
+            else
+              result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+            end
+          when :map
+            if datum.is_a?(Hash)
+              validate_map(expected_schema, datum, path, result, options)
+            else
+              result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+            end
+          when :union
+            validate_union(expected_schema, datum, path, result, options)
+          when :record, :error, :request
+            if datum.is_a?(Hash)
+              expected_schema.fields.each do |field|
+                deeper_path = deeper_path_for_hash(field.name, path)
+                validate_recursive(field.type, datum[field.name], deeper_path, result, options)
+              end
+              if options[:fail_on_extra_fields]
+                datum_fields = datum.keys.map(&:to_s)
+                schema_fields = expected_schema.fields.map(&:name)
+                (datum_fields - schema_fields).each do |extra_field|
+                  result.add_error(path, "extra field '#{extra_field}' - not in schema")
+                end
+              end
+            else
+              result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
             end
           end
+
         end
-      rescue TypeMismatchError
-        result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
       end
 
       def validate_simple(expected_schema, logical_datum, path, result, options = {})
@@ -155,54 +196,34 @@ module Avro
         else
           case expected_schema.type_sym
           when :null
-            return if datum.nil?
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}") unless datum.nil?
           when :boolean
-            return if BOOLEAN_VALUES.include?(datum)
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}") unless BOOLEAN_VALUES.include?(datum)
           when :string, :bytes
-            return if datum.is_a?(String)
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}") unless datum.is_a?(String)
           when :int
             if datum.is_a?(Integer)
               result.add_error(path, "out of bound value #{datum}") unless INT_RANGE.cover?(datum)
-              return
+            else
+              result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
             end
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
           when :long
             if datum.is_a?(Integer)
               result.add_error(path, "out of bound value #{datum}") unless LONG_RANGE.cover?(datum)
-              return
+            else
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
             end
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
           when :float, :double
-            return if datum.is_a?(Float) || datum.is_a?(Integer)
-            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
-            return
+            result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}") unless datum.is_a?(Float) || datum.is_a?(Integer)
           when :fixed
             if datum.is_a? String
               result.add_error(path, fixed_string_message(expected_schema.size, datum)) unless datum.bytesize == expected_schema.size
             else
               result.add_error(path, "expected fixed with size #{expected_schema.size}, got #{actual_value_message(datum)}")
             end
-            return
           when :enum
             result.add_error(path, enum_message(expected_schema.symbols, datum)) unless expected_schema.symbols.include?(datum)
-            return
-            # when :array
-            #   return
-            # when :record
-            #   return
-            # when :map
-            #   return
-            # when :union
-            #   return
-            end
+          end
         end
       end
 
