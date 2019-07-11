@@ -115,30 +115,60 @@ module Avro
 
         case expected_schema.type_sym
         when :null
-          fail TypeMismatchError unless datum.nil?
+          return if datum.nil?
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :boolean
-          fail TypeMismatchError unless BOOLEAN_VALUES.include?(datum)
+          return if BOOLEAN_VALUES.include?(datum)
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :string, :bytes
-          fail TypeMismatchError unless datum.is_a?(String)
+          return if datum.is_a?(String)
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :int
-          fail TypeMismatchError unless datum.is_a?(Integer)
-          result.add_error(path, "out of bound value #{datum}") unless INT_RANGE.cover?(datum)
+          if datum.is_a?(Integer)
+            result.add_error(path, "out of bound value #{datum}") unless INT_RANGE.cover?(datum)
+            return
+          end
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :long
-          fail TypeMismatchError unless datum.is_a?(Integer)
-          result.add_error(path, "out of bound value #{datum}") unless LONG_RANGE.cover?(datum)
+          if datum.is_a?(Integer)
+            result.add_error(path, "out of bound value #{datum}") unless LONG_RANGE.cover?(datum)
+            return
+          end
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :float, :double
-          fail TypeMismatchError unless datum.is_a?(Float) || datum.is_a?(Integer)
+          return if datum.is_a?(Float) || datum.is_a?(Integer)
+          result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+          return
         when :fixed
           if datum.is_a? String
             result.add_error(path, fixed_string_message(expected_schema.size, datum)) unless datum.bytesize == expected_schema.size
           else
             result.add_error(path, "expected fixed with size #{expected_schema.size}, got #{actual_value_message(datum)}")
           end
+          return
         when :enum
           result.add_error(path, enum_message(expected_schema.symbols, datum)) unless expected_schema.symbols.include?(datum)
+          return
+
+          # when :array
+          #   return
+          # when :record
+          #   return
+          # when :map
+          #   return
+          # when :union
+          #   return
+
         end
-      rescue TypeMismatchError
-        result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+        # rescue TypeMismatchError
+        #   result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
+
+        # result.add_error(path, "expected type #{expected_schema.type_sym}, got #{actual_value_message(datum)}")
       end
 
       def resolve_datum(expected_schema, logical_datum, encoded)
